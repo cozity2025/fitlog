@@ -1961,22 +1961,62 @@ async function lookupFood() {
   const btn = document.getElementById('lookupBtn');
   btn.disabled = true;
   btn.textContent = '⏳';
-  showHint('영양 정보를 검색 중입니다...', 'loading');
+  showHint('AI가 분석 중이에요...', 'loading');
  
-  // 1) 내장 DB에서 검색 (부분 일치)
   const name = rawName.trim();
+ 
+  // 1) AI 자연어 검색 (최우선 — "방울토마토 3줌", "삼겹살 두 점" 등 다 가능)
+  try {
+    const res = await fetch('https://fitlog-api.cozity2025.workers.dev', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 300,
+        messages: [{
+          role: 'user',
+          content: '다음 음식의 영양 정보를 알려주세요: "' + name + '"\n반드시 JSON으로만 답하세요 (마크다운 없이):\n{"cal":칼로리숫자,"carb":탄수화물g숫자,"protein":단백질g숫자,"fat":지방g숫자,"serving":"1회 제공량 설명"}'
+        }]
+      })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    const text = (data.content || []).map(c => c.text || '').join('');
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('파싱 실패');
+    const info = JSON.parse(jsonMatch[0]);
+ 
+    _baseNutrition = {
+      cal: info.cal, carb: info.carb,
+      protein: info.protein, fat: info.fat
+    };
+    document.getElementById('foodCal').value     = info.cal;
+    document.getElementById('foodCarb').value    = info.carb;
+    document.getElementById('foodProtein').value = info.protein;
+    document.getElementById('foodFat').value     = info.fat;
+    document.getElementById('servingBaseText').textContent = '기준: ' + (info.serving || '1인분');
+    document.getElementById('servingMultiplier').value = 1;
+    document.getElementById('servingUnit').textContent = '인분';
+    document.getElementById('servingBox').style.display = 'block';
+    showHint('✅ AI 분석 완료! (' + (info.serving || '1인분') + ' 기준)', 'success');
+    btn.disabled = false; btn.textContent = '🔍';
+    return;
+  } catch(e) {
+    console.error('AI 검색 오류:', e);
+  }
+ 
+  // 2) AI 실패 시 내장 DB 폴백
   let dbKey = Object.keys(NUTRITION_DB).find(k =>
     k === name || name.includes(k) || k.includes(name)
   );
  
   if (dbKey) {
     const d = NUTRITION_DB[dbKey];
-    const base100 = { cal: d.cal, carb: d.carb, protein: d.protein, fat: d.fat };
     _baseNutrition = {
-      cal:     Math.round(base100.cal     * d.mult),
-      carb:    Math.round(base100.carb    * d.mult * 10) / 10,
-      protein: Math.round(base100.protein * d.mult * 10) / 10,
-      fat:     Math.round(base100.fat     * d.mult * 10) / 10,
+      cal:     Math.round(d.cal     * d.mult),
+      carb:    Math.round(d.carb    * d.mult * 10) / 10,
+      protein: Math.round(d.protein * d.mult * 10) / 10,
+      fat:     Math.round(d.fat     * d.mult * 10) / 10,
     };
     document.getElementById('foodCal').value     = _baseNutrition.cal;
     document.getElementById('foodCarb').value    = _baseNutrition.carb;
@@ -1986,57 +2026,13 @@ async function lookupFood() {
     document.getElementById('servingMultiplier').value = 1;
     document.getElementById('servingUnit').textContent = '인분';
     document.getElementById('servingBox').style.display = 'block';
-    showHint('✅ ' + d.serving + ' 기준으로 자동 입력됐어요. 분량을 조절해보세요!', 'success');
+    showHint('✅ ' + d.serving + ' 기준으로 자동 입력됐어요!', 'success');
     btn.disabled = false; btn.textContent = '🔍';
     return;
   }
  
-  // 2) 식품의약품안전처 식품영양성분DB API
-  const FOOD_API_KEY = '635bfd8dd83fac5edb6b3097ffe2bf6f3eccf54a34b7143120c52a52b3e21b34';
-  try {
-    const query = encodeURIComponent(name);
-    const url = 'https://apis.data.go.kr/1471000/FoodNtrCpntDbInfo02/getFoodNtrCpntDbInq02'
-      + '?serviceKey=' + FOOD_API_KEY
-      + '&FOOD_NM_KR=' + query
-      + '&pageNo=1&numOfRows=5&type=json';
- 
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    const data = await res.json();
-    const items = data?.body?.items;
- 
-    if (items && items.length > 0) {
-      const item = items[0];
-      // 1회 제공량 기준 영양소 파싱
-      const serving = parseFloat(item.SERVING_WT) || 100;
-      const kcal    = parseFloat(item.AMT_NUM1)   || 0; // 에너지(kcal)
-      const carb    = parseFloat(item.AMT_NUM7)   || 0; // 탄수화물(g)
-      const protein = parseFloat(item.AMT_NUM3)   || 0; // 단백질(g)
-      const fat     = parseFloat(item.AMT_NUM4)   || 0; // 지방(g)
- 
-      _baseNutrition = {
-        cal:     Math.round(kcal),
-        carb:    Math.round(carb * 10) / 10,
-        protein: Math.round(protein * 10) / 10,
-        fat:     Math.round(fat * 10) / 10,
-      };
-      document.getElementById('foodCal').value     = _baseNutrition.cal;
-      document.getElementById('foodCarb').value    = _baseNutrition.carb;
-      document.getElementById('foodProtein').value = _baseNutrition.protein;
-      document.getElementById('foodFat').value     = _baseNutrition.fat;
- 
-      const servingLabel = serving + 'g 기준';
-      document.getElementById('servingBaseText').textContent = '기준: ' + item.FOOD_NM_KR + ' ' + servingLabel;
-      document.getElementById('servingMultiplier').value = 1;
-      document.getElementById('servingUnit').textContent = '인분';
-      document.getElementById('servingBox').style.display = 'block';
-      showHint('✅ ' + item.FOOD_NM_KR + ' (' + servingLabel + ') — 식품안전처 DB', 'success');
-      btn.disabled = false; btn.textContent = '🔍';
-      return;
-    }
-  } catch(e) { console.error('식품안전처 API 오류:', e); }
- 
-  // 3) 못 찾은 경우
-  showHint('찾지 못했어요. 다른 이름으로 검색해보세요. (예: 닭갈비, 훈제연어, 토마토)', 'error');
+  // 3) 최종 실패
+  showHint('찾지 못했어요. 직접 입력해주세요.', 'error');
   document.getElementById('servingBox').style.display = 'none';
   btn.disabled = false;
   btn.textContent = '🔍';
