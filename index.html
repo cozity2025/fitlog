@@ -203,6 +203,20 @@
   .btn-lookup:hover { opacity: 0.85; transform: translateY(-1px); }
   .btn-lookup:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
  
+  .btn-photo {
+    background: linear-gradient(135deg, var(--accent4), #0fa86e);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+  .btn-photo:hover { opacity: 0.85; transform: translateY(-1px); }
+ 
   .nutrition-hint {
     font-size: 0.72rem;
     padding: 6px 10px;
@@ -1054,6 +1068,52 @@
     .ring-row { grid-template-columns: 1fr; }
   }
  
+ 
+  /* ── PHOTO ANALYSIS ── */
+  .photo-upload-area {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-bottom: 8px;
+    background: var(--surface2);
+    position: relative;
+  }
+  .photo-upload-area:hover { border-color: var(--accent2); background: rgba(123,97,255,0.05); }
+  .photo-upload-area.drag-over { border-color: var(--accent2); background: rgba(123,97,255,0.1); }
+  .photo-preview {
+    max-width: 100%;
+    max-height: 160px;
+    border-radius: 6px;
+    object-fit: cover;
+    display: none;
+    margin: 0 auto 8px;
+  }
+  .photo-upload-icon { font-size: 2rem; margin-bottom: 6px; opacity: 0.5; }
+  .photo-upload-text { font-size: 0.75rem; color: var(--text-muted); }
+  .btn-photo-analyze {
+    background: linear-gradient(135deg, #ff6b9d, var(--accent2));
+    color: white;
+    width: 100%;
+    padding: 10px;
+    font-size: 0.85rem;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    display: none;
+  }
+  .btn-photo-analyze:hover { opacity: 0.88; transform: translateY(-1px); }
+  .photo-hint {
+    font-size: 0.72rem;
+    padding: 6px 10px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+  }
+  .photo-hint.loading { color: var(--accent2); background: rgba(123,97,255,0.08); border: 1px solid rgba(123,97,255,0.2); }
+  .photo-hint.success { color: var(--accent4); background: rgba(28,201,138,0.08); border: 1px solid rgba(28,201,138,0.2); }
+  .photo-hint.error   { color: var(--accent3); background: rgba(255,92,92,0.08);  border: 1px solid rgba(255,92,92,0.2); }
+ 
 </style>
 </head>
 <body>
@@ -1080,6 +1140,21 @@
     <!-- MEAL INPUT -->
     <div class="section-label">🍽️ 식사 기록</div>
  
+    <!-- Photo Analysis -->
+    <div class="photo-upload-area" id="photoUploadArea" onclick="document.getElementById('photoInput').click()"
+      ondragover="event.preventDefault();this.classList.add('drag-over')"
+      ondragleave="this.classList.remove('drag-over')"
+      ondrop="handlePhotoDrop(event)">
+      <img id="photoPreview" class="photo-preview" />
+      <div id="photoUploadIcon" class="photo-upload-icon">📸</div>
+      <div class="photo-upload-text">사진을 올리면 AI가 음식을 인식하고<br>영양 정보를 자동으로 채워줘요</div>
+      <input type="file" id="photoInput" accept="image/*" style="display:none" onchange="handlePhotoSelect(event)" />
+    </div>
+    <div id="photoHint"></div>
+    <button class="btn btn-photo-analyze" id="photoAnalyzeBtn" onclick="analyzePhoto()">
+      📸 AI로 음식 사진 분석하기
+    </button>
+ 
     <select id="mealType" style="margin-bottom: 8px; width: 100%;">
       <option value="breakfast">아침</option>
       <option value="lunch">점심</option>
@@ -1091,6 +1166,9 @@
       <input type="text" id="foodName" placeholder="음식 이름 입력 후 🔍 클릭 또는 Enter"
              style="flex:1" onkeydown="if(event.key==='Enter') lookupFood()" />
       <button class="btn btn-lookup" id="lookupBtn" onclick="lookupFood()" title="영양정보 자동 검색">🔍</button>
+      <label class="btn btn-photo" title="사진으로 분석" style="cursor:pointer;">
+        📷<input type="file" id="foodPhoto" accept="image/*" capture="environment" style="display:none;" onchange="analyzePhoto(this)">
+      </label>
       <button class="btn btn-accent" onclick="addFood()">추가</button>
     </div>
  
@@ -1587,6 +1665,121 @@ window.addEventListener('resize', () => {
   }
 });
  
+ 
+// ── PHOTO ANALYSIS ──
+const WORKER_URL = 'https://fitlog-api.cozity2025.workers.dev';
+let _photoBase64 = null;
+ 
+function handlePhotoSelect(event) {
+  const file = event.target.files[0];
+  if (file) loadPhotoFile(file);
+}
+ 
+function handlePhotoDrop(event) {
+  event.preventDefault();
+  document.getElementById('photoUploadArea').classList.remove('drag-over');
+  const file = event.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) loadPhotoFile(file);
+}
+ 
+function loadPhotoFile(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const base64 = e.target.result.split(',')[1];
+    const mediaType = file.type;
+    _photoBase64 = { base64, mediaType };
+ 
+    const preview = document.getElementById('photoPreview');
+    preview.src = e.target.result;
+    preview.style.display = 'block';
+    document.getElementById('photoUploadIcon').style.display = 'none';
+    document.getElementById('photoAnalyzeBtn').style.display = 'block';
+    document.getElementById('photoHint').className = '';
+    document.getElementById('photoHint').textContent = '';
+  };
+  reader.readAsDataURL(file);
+}
+ 
+async function analyzePhoto() {
+  if (!_photoBase64) return;
+ 
+  const btn = document.getElementById('photoAnalyzeBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ 분석 중...';
+  showPhotoHint('AI가 음식 사진을 분석하고 있습니다...', 'loading');
+ 
+  const prompt = `이 음식 사진을 보고 아래 JSON 형식으로만 답해주세요 (마크다운 없이):
+{
+  "foodName": "음식 이름 (한국어)",
+  "cal": 칼로리(숫자),
+  "carb": 탄수화물g(숫자),
+  "protein": 단백질g(숫자),
+  "fat": 지방g(숫자),
+  "serving": "1인분 기준 설명"
+}
+음식이 여러 개면 전체 합산으로 계산해주세요. 영양 정보는 일반적인 1인분 기준으로 추정해주세요.`;
+ 
+  try {
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 500,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: _photoBase64.mediaType, data: _photoBase64.base64 } },
+            { type: 'text', text: prompt }
+          ]
+        }]
+      })
+    });
+ 
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message || 'API 오류');
+ 
+    const text = (data.content || []).map(c => c.text || '').join('');
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('분석 실패');
+    const info = JSON.parse(jsonMatch[0]);
+ 
+    // 자동 입력
+    document.getElementById('foodName').value     = info.foodName || '';
+    document.getElementById('foodCal').value      = info.cal || '';
+    document.getElementById('foodCarb').value     = info.carb || '';
+    document.getElementById('foodProtein').value  = info.protein || '';
+    document.getElementById('foodFat').value      = info.fat || '';
+ 
+    _baseNutrition = { cal: info.cal, carb: info.carb, protein: info.protein, fat: info.fat };
+    document.getElementById('servingBaseText').textContent = '기준: ' + (info.serving || '1인분');
+    document.getElementById('servingMultiplier').value = 1;
+    document.getElementById('servingUnit').textContent = '인분';
+    document.getElementById('servingBox').style.display = 'block';
+ 
+    showPhotoHint('✅ ' + info.foodName + ' 인식 완료! 확인 후 추가 버튼을 눌러주세요.', 'success');
+ 
+    // 사진 초기화
+    _photoBase64 = null;
+    document.getElementById('photoPreview').style.display = 'none';
+    document.getElementById('photoUploadIcon').style.display = 'block';
+    document.getElementById('photoAnalyzeBtn').style.display = 'none';
+    document.getElementById('photoInput').value = '';
+ 
+  } catch(e) {
+    showPhotoHint('분석 실패: ' + e.message + ' — 직접 입력해주세요.', 'error');
+  }
+ 
+  btn.disabled = false;
+  btn.textContent = '📸 AI로 음식 사진 분석하기';
+}
+ 
+function showPhotoHint(msg, type) {
+  const el = document.getElementById('photoHint');
+  el.className = 'photo-hint ' + type;
+  el.textContent = msg;
+}
+ 
 // ── ADD FOOD ──
 function addFood() {
   const name = document.getElementById('foodName').value.trim();
@@ -1608,6 +1801,84 @@ function addFood() {
   renderAll();
 }
  
+ 
+ 
+// ── PHOTO ANALYSIS ──
+async function analyzePhoto(input) {
+  const file = input.files[0];
+  if (!file) return;
+ 
+  const btn = document.getElementById('lookupBtn');
+  btn.disabled = true;
+  showHint('📷 사진을 분석하고 있어요...', 'loading');
+ 
+  try {
+    // Convert image to base64
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+ 
+    const mediaType = file.type || 'image/jpeg';
+ 
+    const res = await fetch('https://fitlog-api.cozity2025.workers.dev', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 500,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: mediaType, data: base64 }
+            },
+            {
+              type: 'text',
+              text: '이 사진에 있는 음식을 분석해서 영양 정보를 알려주세요. 반드시 JSON으로만 답하세요 (마크다운 없이):\n{"foodName":"음식명","cal":칼로리,"carb":탄수화물g,"protein":단백질g,"fat":지방g,"serving":"1인분 기준 설명"}'
+            }
+          ]
+        }]
+      })
+    });
+ 
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+ 
+    const text = (data.content || []).map(c => c.text || '').join('');
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('분석 실패');
+    const info = JSON.parse(jsonMatch[0]);
+ 
+    // Fill in the form
+    document.getElementById('foodName').value = info.foodName || '';
+    document.getElementById('foodCal').value = info.cal || 0;
+    document.getElementById('foodCarb').value = info.carb || 0;
+    document.getElementById('foodProtein').value = info.protein || 0;
+    document.getElementById('foodFat').value = info.fat || 0;
+ 
+    _baseNutrition = {
+      cal: info.cal, carb: info.carb,
+      protein: info.protein, fat: info.fat
+    };
+ 
+    document.getElementById('servingBaseText').textContent = '기준: ' + (info.serving || '1인분');
+    document.getElementById('servingMultiplier').value = 1;
+    document.getElementById('servingUnit').textContent = '인분';
+    document.getElementById('servingBox').style.display = 'block';
+ 
+    showHint('✅ ' + info.foodName + ' 분석 완료! 확인 후 추가 버튼을 눌러주세요.', 'success');
+ 
+  } catch(e) {
+    showHint('사진 분석 실패: ' + e.message + ' — 직접 입력해주세요.', 'error');
+  }
+ 
+  btn.disabled = false;
+  input.value = ''; // reset file input
+}
  
 // ── NUTRITION LOOKUP ──
 let _baseNutrition = null;
@@ -1720,53 +1991,52 @@ async function lookupFood() {
     return;
   }
  
-  // 2) Open Food Facts API (영어 검색)
+  // 2) 식품의약품안전처 식품영양성분DB API
+  const FOOD_API_KEY = '635bfd8dd83fac5edb6b3097ffe2bf6f3eccf54a34b7143120c52a52b3e21b34';
   try {
     const query = encodeURIComponent(name);
-    const res = await fetch(
-      'https://world.openfoodfacts.org/cgi/search.pl?search_terms=' + query +
-      '&search_simple=1&action=process&json=1&page_size=5&lc=ko',
-      { signal: AbortSignal.timeout(5000) }
-    );
-    const data = await res.json();
-    const products = (data.products || []).filter(p =>
-      p.nutriments && p.nutriments['energy-kcal_100g']
-    );
+    const url = 'https://apis.data.go.kr/1471000/FoodNtrCpntDbInfo02/getFoodNtrCpntDbInq02'
+      + '?serviceKey=' + FOOD_API_KEY
+      + '&FOOD_NM_KR=' + query
+      + '&pageNo=1&numOfRows=5&type=json';
  
-    if (products.length > 0) {
-      const p = products[0];
-      const n = p.nutriments;
-      const kcal100 = n['energy-kcal_100g'] || 0;
-      const carb100 = n['carbohydrates_100g'] || 0;
-      const prot100 = n['proteins_100g'] || 0;
-      const fat100  = n['fat_100g'] || 0;
-      const servingG = p.serving_size ? parseFloat(p.serving_size) : 100;
-      const mult = servingG / 100;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const data = await res.json();
+    const items = data?.body?.items;
+ 
+    if (items && items.length > 0) {
+      const item = items[0];
+      // 1회 제공량 기준 영양소 파싱
+      const serving = parseFloat(item.SERVING_WT) || 100;
+      const kcal    = parseFloat(item.AMT_NUM1)   || 0; // 에너지(kcal)
+      const carb    = parseFloat(item.AMT_NUM7)   || 0; // 탄수화물(g)
+      const protein = parseFloat(item.AMT_NUM3)   || 0; // 단백질(g)
+      const fat     = parseFloat(item.AMT_NUM4)   || 0; // 지방(g)
  
       _baseNutrition = {
-        cal:     Math.round(kcal100 * mult),
-        carb:    Math.round(carb100 * mult * 10) / 10,
-        protein: Math.round(prot100 * mult * 10) / 10,
-        fat:     Math.round(fat100  * mult * 10) / 10,
+        cal:     Math.round(kcal),
+        carb:    Math.round(carb * 10) / 10,
+        protein: Math.round(protein * 10) / 10,
+        fat:     Math.round(fat * 10) / 10,
       };
       document.getElementById('foodCal').value     = _baseNutrition.cal;
       document.getElementById('foodCarb').value    = _baseNutrition.carb;
       document.getElementById('foodProtein').value = _baseNutrition.protein;
       document.getElementById('foodFat').value     = _baseNutrition.fat;
  
-      const servingLabel = p.serving_size ? ('1회 제공량 ' + p.serving_size) : '100g 기준';
-      document.getElementById('servingBaseText').textContent = '기준: ' + servingLabel;
+      const servingLabel = serving + 'g 기준';
+      document.getElementById('servingBaseText').textContent = '기준: ' + item.FOOD_NM_KR + ' ' + servingLabel;
       document.getElementById('servingMultiplier').value = 1;
       document.getElementById('servingUnit').textContent = '인분';
       document.getElementById('servingBox').style.display = 'block';
-      showHint('✅ ' + (p.product_name || name) + ' 기준으로 자동 입력됐어요!', 'success');
+      showHint('✅ ' + item.FOOD_NM_KR + ' (' + servingLabel + ') — 식품안전처 DB', 'success');
       btn.disabled = false; btn.textContent = '🔍';
       return;
     }
-  } catch(e) {}
+  } catch(e) { console.error('식품안전처 API 오류:', e); }
  
   // 3) 못 찾은 경우
-  showHint('찾지 못했어요. 직접 입력하거나 다른 이름으로 검색해보세요.', 'error');
+  showHint('찾지 못했어요. 다른 이름으로 검색해보세요. (예: 닭갈비, 훈제연어, 토마토)', 'error');
   document.getElementById('servingBox').style.display = 'none';
   btn.disabled = false;
   btn.textContent = '🔍';
@@ -1851,7 +2121,7 @@ ${raw}
 }`;
  
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetch('https://fitlog-api.cozity2025.workers.dev', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2139,7 +2409,7 @@ ${state.profile.age ? `- 나이: ${state.profile.age}세` : ''}
 {"good":["잘 하고 있는 점 2~3가지"],"warn":["주의해야 할 점 1~2가지"],"bad":["부족하거나 개선이 필요한 점 1~2가지"],"tips":["내일을 위한 개선 팁 2~3가지"]}`;
  
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetch('https://fitlog-api.cozity2025.workers.dev', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
