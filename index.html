@@ -1729,8 +1729,8 @@ function loadPhotoFile(file) {
   const img = new Image();
   const url = URL.createObjectURL(file);
   img.onload = () => {
-    // 최대 1024px로 리사이즈 + 압축
-    const MAX = 1024;
+    // 최대 800px로 리사이즈 + 강한 압축
+    const MAX = 800;
     let w = img.width, h = img.height;
     if (w > MAX || h > MAX) {
       if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
@@ -1740,7 +1740,13 @@ function loadPhotoFile(file) {
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(img, 0, 0, w, h);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+    // 4MB 이하가 될 때까지 품질 낮추기
+    let quality = 0.7;
+    let dataUrl = canvas.toDataURL('image/jpeg', quality);
+    while (dataUrl.length * 0.75 > 3.5 * 1024 * 1024 && quality > 0.1) {
+      quality -= 0.1;
+      dataUrl = canvas.toDataURL('image/jpeg', quality);
+    }
     const base64 = dataUrl.split(',')[1];
     _photoBase64 = { base64, mediaType: 'image/jpeg' };
 
