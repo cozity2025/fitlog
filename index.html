@@ -1535,6 +1535,36 @@
  
 <script>
 // ── STATE ──
+let ANTHROPIC_KEY = null;
+ 
+async function getApiKey() {
+  if (ANTHROPIC_KEY) return ANTHROPIC_KEY;
+  try {
+    const res = await fetch('https://fitlog-api.cozity2025.workers.dev');
+    ANTHROPIC_KEY = data.key;
+    return ANTHROPIC_KEY;
+  } catch(e) {
+    console.error('키 로드 실패:', e);
+    return null;
+  }
+}
+ 
+async function callAI(body) {
+  const key = await getApiKey();
+  if (!key) throw new Error('API 키를 불러올 수 없어요');
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify(body)
+  });
+  return res.json();
+}
+ 
 let state = {
   foods: [],
   exercises: [],
@@ -1720,10 +1750,7 @@ async function analyzePhoto() {
 음식이 여러 개면 전체 합산으로 계산해주세요. 영양 정보는 일반적인 1인분 기준으로 추정해주세요.`;
  
   try {
-    const res = await fetch(WORKER_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const data = await callAI({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 500,
         messages: [{
@@ -1733,10 +1760,7 @@ async function analyzePhoto() {
             { type: 'text', text: prompt }
           ]
         }]
-      })
-    });
- 
-    const data = await res.json();
+      });
     if (data.error) throw new Error(data.error.message || 'API 오류');
  
     const text = (data.content || []).map(c => c.text || '').join('');
@@ -1823,10 +1847,7 @@ async function analyzePhoto(input) {
  
     const mediaType = file.type || 'image/jpeg';
  
-    const res = await fetch('https://fitlog-api.cozity2025.workers.dev', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const data = await callAI({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 500,
         messages: [{
@@ -1842,10 +1863,7 @@ async function analyzePhoto(input) {
             }
           ]
         }]
-      })
-    });
- 
-    const data = await res.json();
+      });
     if (data.error) throw new Error(data.error.message);
  
     const text = (data.content || []).map(c => c.text || '').join('');
@@ -1965,31 +1983,22 @@ async function lookupFood() {
  
   const name = rawName.trim();
  
-  // 1) AI 자연어 검색 (최우선 — "방울토마토 3줌", "삼겹살 두 점" 등 다 가능)
   try {
-    const res = await fetch('https://fitlog-api.cozity2025.workers.dev', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 300,
-        messages: [{
-          role: 'user',
-          content: '다음 음식의 영양 정보를 알려주세요: "' + name + '"\n반드시 JSON으로만 답하세요 (마크다운 없이):\n{"cal":칼로리숫자,"carb":탄수화물g숫자,"protein":단백질g숫자,"fat":지방g숫자,"serving":"1회 제공량 설명"}'
-        }]
-      })
+    const data = await callAI({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 300,
+      messages: [{
+        role: 'user',
+        content: '다음 음식의 영양 정보를 알려주세요: "' + name + '"\n반드시 JSON으로만 답하세요 (마크다운 없이):\n{"cal":칼로리숫자,"carb":탄수화물g숫자,"protein":단백질g숫자,"fat":지방g숫자,"serving":"1회 제공량 설명"}'
+      }]
     });
-    const data = await res.json();
     if (data.error) throw new Error(data.error.message);
-    const text = (data.content || []).map(c => c.text || '').join('');
+    const text = (data.content || []).map(x => x.text || '').join('');
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('파싱 실패');
     const info = JSON.parse(jsonMatch[0]);
  
-    _baseNutrition = {
-      cal: info.cal, carb: info.carb,
-      protein: info.protein, fat: info.fat
-    };
+    _baseNutrition = { cal: info.cal, carb: info.carb, protein: info.protein, fat: info.fat };
     document.getElementById('foodCal').value     = info.cal;
     document.getElementById('foodCarb').value    = info.carb;
     document.getElementById('foodProtein').value = info.protein;
@@ -2005,11 +2014,10 @@ async function lookupFood() {
     console.error('AI 검색 오류:', e);
   }
  
-  // 2) AI 실패 시 내장 DB 폴백
+  // 폴백: 내장 DB
   let dbKey = Object.keys(NUTRITION_DB).find(k =>
     k === name || name.includes(k) || k.includes(name)
   );
- 
   if (dbKey) {
     const d = NUTRITION_DB[dbKey];
     _baseNutrition = {
@@ -2031,7 +2039,6 @@ async function lookupFood() {
     return;
   }
  
-  // 3) 최종 실패
   showHint('찾지 못했어요. 직접 입력해주세요.', 'error');
   document.getElementById('servingBox').style.display = 'none';
   btn.disabled = false;
@@ -2117,16 +2124,11 @@ ${raw}
 }`;
  
   try {
-    const res = await fetch('https://fitlog-api.cozity2025.workers.dev', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const data = await callAI({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 2000,
         messages: [{ role: 'user', content: prompt }]
-      })
-    });
-    const data = await res.json();
+      });
     const text = (data.content || []).map(c => c.text || '').join('').replace(/```json|```/g,'').trim();
     const parsed = JSON.parse(text);
  
@@ -2405,18 +2407,12 @@ ${state.profile.age ? `- 나이: ${state.profile.age}세` : ''}
 {"good":["잘 하고 있는 점 2~3가지"],"warn":["주의해야 할 점 1~2가지"],"bad":["부족하거나 개선이 필요한 점 1~2가지"],"tips":["내일을 위한 개선 팁 2~3가지"]}`;
  
   try {
-    const res = await fetch('https://fitlog-api.cozity2025.workers.dev', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const data = await callAI({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1000,
         system: '당신은 건강 분석 AI입니다. 반드시 순수 JSON만 응답하세요. 절대 설명문이나 마크다운을 쓰지 마세요.',
         messages: [{ role: 'user', content: prompt }]
-      })
-    });
- 
-    const data = await res.json();
+      });
     if (data.error) throw new Error(data.error.message || 'API 오류');
     const text = (data.content || []).map(c => c.text || '').join('');
  
