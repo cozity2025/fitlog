@@ -670,6 +670,12 @@
     outline: none;
     transition: border-color 0.2s;
     margin-bottom: 6px;
+    -webkit-user-select: text;
+    user-select: text;
+    touch-action: auto;
+    pointer-events: auto;
+    position: relative;
+    z-index: 10;
   }
   .parse-textarea:focus { border-color: var(--accent2); }
   .parse-textarea::placeholder { color: var(--text-dim); font-size: 0.7rem; }
